@@ -8,6 +8,10 @@ from json import JSONEncoder
 import os
 import warnings
 import base64
+from io import BytesIO
+from zipfile import ZipFile
+import hashlib
+
 try:
     from dateutil.parser import parse
 except ImportError:
@@ -63,6 +67,8 @@ class MISPAttribute(object):
         self.distribution = 5
 
         # other possible values
+        self.data = None
+        self.encrypt = False
         self.id = None
         self.uuid = None
         self.timestamp = None
@@ -71,6 +77,9 @@ class MISPAttribute(object):
         self.sig = None
         self.SharingGroup = []
         self.ShadowAttribute = []
+        self.disable_correlation = False
+        self.RelatedAttribute = []
+        self.Tag = []
 
     def _serialize(self):
         return '{type}{category}{to_ids}{uuid}{timestamp}{comment}{deleted}{value}'.format(
@@ -88,6 +97,12 @@ class MISPAttribute(object):
                 c.set_passphrase_cb(lambda *args: passphrase)
             signed, _ = c.sign(to_sign, mode=mode.DETACH)
             self.sig = base64.b64encode(signed).decode()
+
+    def delete(self):
+        self.deleted = True
+
+    def add_tag(self, tag):
+        self.Tag.append({'name': tag})
 
     def verify(self, gpg_uid):
         if not has_pyme:
@@ -138,10 +153,13 @@ class MISPAttribute(object):
             self.comment = kwargs['comment']
         if kwargs.get('distribution'):
             self.distribution = int(kwargs['distribution'])
-            if self.distribution not in [0, 1, 2, 3, 5]:
-                raise NewAttributeError('{} is invalid, the distribution has to be in 0, 1, 2, 3, 5'.format(self.distribution))
+            if self.distribution not in [0, 1, 2, 3, 4, 5]:
+                raise NewAttributeError('{} is invalid, the distribution has to be in 0, 1, 2, 3, 4, 5'.format(self.distribution))
 
         # other possible values
+        if kwargs.get('data'):
+            self.data = kwargs['data']
+            self._load_data()
         if kwargs.get('id'):
             self.id = int(kwargs['id'])
         if kwargs.get('uuid'):
@@ -158,15 +176,59 @@ class MISPAttribute(object):
             self.ShadowAttribute = kwargs['ShadowAttribute']
         if kwargs.get('sig'):
             self.sig = kwargs['sig']
+        if kwargs.get('Tag'):
+            self.Tag = [t for t in kwargs['Tag'] if t]
+
+        # If the user wants to disable correlation, let them. Defaults to False.
+        self.disable_correlation = kwargs.get("disable_correlation", False)
+
+    def _prepare_new_malware_sample(self):
+        if '|' in self.value:
+            # Get the filename, ignore the md5, because humans.
+            self.malware_filename, md5 = self.value.split('|')
+        else:
+            # Assuming the user only passed the filename
+            self.malware_filename = self.value
+        m = hashlib.md5()
+        m.update(self.data.getvalue())
+        md5 = m.hexdigest()
+        self.value = '{}|{}'.format(self.malware_filename, md5)
+        self.malware_binary = self.data
+        self.encrypt = True
+
+    def _load_data(self):
+        if not isinstance(self.data, BytesIO):
+            self.data = BytesIO(base64.b64decode(self.data))
+        if self.type == 'malware-sample':
+            try:
+                with ZipFile(self.data) as f:
+                    for name in f.namelist():
+                        if name.endswith('.txt'):
+                            with f.open(name, pwd=b'infected') as unpacked:
+                                self.malware_filename = unpacked.read().decode()
+                        else:
+                            with f.open(name, pwd=b'infected') as unpacked:
+                                self.malware_binary = BytesIO(unpacked.read())
+            except:
+                # not a encrypted zip file, assuming it is a new malware sample
+                self._prepare_new_malware_sample()
 
     def _json(self):
         to_return = {'type': self.type, 'category': self.category, 'to_ids': self.to_ids,
                      'distribution': self.distribution, 'value': self.value,
-                     'comment': self.comment}
-        if self.sharing_group_id:
-            to_return['sharing_group_id'] = self.sharing_group_id
+                     'comment': self.comment, 'disable_correlation': self.disable_correlation}
+        if self.uuid:
+            to_return['uuid'] = self.uuid
         if self.sig:
             to_return['sig'] = self.sig
+        if self.sharing_group_id:
+            to_return['sharing_group_id'] = self.sharing_group_id
+        if self.Tag:
+            to_return['Tag'] = self.Tag
+        if self.data:
+            to_return['data'] = base64.b64encode(self.data.getvalue()).decode()
+            if self.encrypt:
+                to_return['entrypt'] = self.encrypt
         to_return = _int_to_str(to_return)
         return to_return
 
@@ -174,9 +236,8 @@ class MISPAttribute(object):
         to_return = self._json()
         if self.id:
             to_return['id'] = self.id
-        if self.uuid:
-            to_return['uuid'] = self.uuid
         if self.timestamp:
+            # Should never be set on an update, MISP will automatically set it to now
             to_return['timestamp'] = int(time.mktime(self.timestamp.timetuple()))
         if self.deleted is not None:
             to_return['deleted'] = self.deleted
@@ -216,8 +277,10 @@ class MISPEvent(object):
 
     def __init__(self, describe_types=None):
         self.ressources_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'data')
-        self.json_schema = json.load(open(os.path.join(self.ressources_path, 'schema.json'), 'r'))
-        self.json_schema_lax = json.load(open(os.path.join(self.ressources_path, 'schema-lax.json'), 'r'))
+        with open(os.path.join(self.ressources_path, 'schema.json'), 'r') as f:
+            self.json_schema = json.load(f)
+        with open(os.path.join(self.ressources_path, 'schema-lax.json'), 'r') as f:
+            self.json_schema_lax = json.load(f)
         if not describe_types:
             t = json.load(open(os.path.join(self.ressources_path, 'describeTypes.json'), 'r'))
             describe_types = t['result']
@@ -259,6 +322,7 @@ class MISPEvent(object):
         self.ShadowAttribute = []
         self.RelatedEvent = []
         self.Tag = []
+        self.Galaxy = None
 
     def _serialize(self):
         return '{date}{threat_level_id}{info}{uuid}{analysis}{timestamp}'.format(
@@ -365,8 +429,8 @@ class MISPEvent(object):
         # Default values for a valid event to send to a MISP instance
         if kwargs.get('distribution') is not None:
             self.distribution = int(kwargs['distribution'])
-            if self.distribution not in [0, 1, 2, 3]:
-                raise NewEventError('{} is invalid, the distribution has to be in 0, 1, 2, 3'.format(self.distribution))
+            if self.distribution not in [0, 1, 2, 3, 4]:
+                raise NewEventError('{} is invalid, the distribution has to be in 0, 1, 2, 3, 4'.format(self.distribution))
         if kwargs.get('threat_level_id') is not None:
             self.threat_level_id = int(kwargs['threat_level_id'])
             if self.threat_level_id not in [1, 2, 3, 4]:
@@ -413,9 +477,15 @@ class MISPEvent(object):
         if kwargs.get('ShadowAttribute'):
             self.ShadowAttribute = kwargs['ShadowAttribute']
         if kwargs.get('RelatedEvent'):
-            self.RelatedEvent = kwargs['RelatedEvent']
+            self.RelatedEvent = []
+            for rel_event in kwargs['RelatedEvent']:
+                sub_event = MISPEvent()
+                sub_event.load(rel_event)
+                self.RelatedEvent.append(sub_event)
+        if kwargs.get('Galaxy'):
+            self.Galaxy = kwargs['Galaxy']
         if kwargs.get('Tag'):
-            self.Tag = kwargs['Tag']
+            self.Tag = [t for t in kwargs['Tag'] if t]
         if kwargs.get('sig'):
             self.sig = kwargs['sig']
         if kwargs.get('global_sig'):
@@ -428,21 +498,19 @@ class MISPEvent(object):
                               'threat_level_id': self.threat_level_id,
                               'analysis': self.analysis, 'Attribute': []}
         if self.sig:
-            to_return['sig'] = self.sig
+            to_return['Event']['sig'] = self.sig
         if self.global_sig:
-            to_return['global_sig'] = self.global_sig
-        if self.id:
-            to_return['Event']['id'] = self.id
-        if self.orgc_id:
-            to_return['Event']['orgc_id'] = self.orgc_id
-        if self.org_id:
-            to_return['Event']['org_id'] = self.org_id
+            to_return['Event']['global_sig'] = self.global_sig
         if self.uuid:
             to_return['Event']['uuid'] = self.uuid
-        if self.sharing_group_id:
-            to_return['Event']['sharing_group_id'] = self.sharing_group_id
         if self.Tag:
             to_return['Event']['Tag'] = self.Tag
+        if self.Orgc:
+            to_return['Event']['Orgc'] = self.Orgc
+        if self.Galaxy:
+            to_return['Event']['Galaxy'] = self.Galaxy
+        if self.sharing_group_id:
+            to_return['Event']['sharing_group_id'] = self.sharing_group_id
         to_return['Event'] = _int_to_str(to_return['Event'])
         if self.attributes:
             to_return['Event']['Attribute'] = [a._json() for a in self.attributes]
@@ -451,16 +519,24 @@ class MISPEvent(object):
 
     def _json_full(self):
         to_return = self._json()
+        if self.id:
+            to_return['Event']['id'] = self.id
+        if self.orgc_id:
+            to_return['Event']['orgc_id'] = self.orgc_id
+        if self.org_id:
+            to_return['Event']['org_id'] = self.org_id
         if self.locked is not None:
             to_return['Event']['locked'] = self.locked
         if self.attribute_count is not None:
             to_return['Event']['attribute_count'] = self.attribute_count
         if self.RelatedEvent:
-            to_return['Event']['RelatedEvent'] = self.RelatedEvent
+            to_return['Event']['RelatedEvent'] = []
+            for rel_event in self.RelatedEvent:
+                to_return['Event']['RelatedEvent'].append(rel_event._json_full())
         if self.Org:
             to_return['Event']['Org'] = self.Org
-        if self.Orgc:
-            to_return['Event']['Orgc'] = self.Orgc
+        if self.sharing_group_id:
+            to_return['Event']['sharing_group_id'] = self.sharing_group_id
         if self.ShadowAttribute:
             to_return['Event']['ShadowAttribute'] = self.ShadowAttribute
         if self.proposal_email_lock is not None:
@@ -470,6 +546,7 @@ class MISPEvent(object):
         if self.publish_timestamp:
             to_return['Event']['publish_timestamp'] = int(time.mktime(self.publish_timestamp.timetuple()))
         if self.timestamp:
+            # Should never be set on an update, MISP will automatically set it to now
             to_return['Event']['timestamp'] = int(time.mktime(self.timestamp.timetuple()))
         to_return['Event'] = _int_to_str(to_return['Event'])
         if self.attributes:
@@ -477,11 +554,34 @@ class MISPEvent(object):
         jsonschema.validate(to_return, self.json_schema)
         return to_return
 
+    def add_tag(self, tag):
+        self.Tag.append({'name': tag})
+
+    def add_attribute_tag(self, tag, attribute_identifier):
+        attribute = None
+        for a in self.attributes:
+            if a.id == attribute_identifier or a.uuid == attribute_identifier or attribute_identifier in a.value:
+                a.add_tag(tag)
+                attribute = a
+        if not attribute:
+            raise Exception('No attribute with identifier {} found.'.format(attribute_identifier))
+        return attribute
+
     def publish(self):
         self.published = True
 
     def unpublish(self):
         self.published = False
+
+    def delete_attribute(self, attribute_id):
+        found = False
+        for a in self.attributes:
+            if a.id == attribute_id or a.uuid == attribute_id:
+                a.delete()
+                found = True
+                break
+        if not found:
+            raise Exception('No attribute with UUID/ID {} found.'.format(attribute_id))
 
     def add_attribute(self, type, value, **kwargs):
         attribute = MISPAttribute(self.describe_types)

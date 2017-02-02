@@ -44,6 +44,7 @@ class distributions(object):
     this_community = 1
     connected_communities = 2
     all_communities = 3
+    sharing_group = 4
 
 
 class threat_level(object):
@@ -62,19 +63,18 @@ class analysis(object):
 
 
 class PyMISP(object):
-    """
-        Python API for MISP
+    """Python API for MISP
 
-        :param url: URL of the MISP instance you want to connect to
-        :param key: API key of the user you want to use
-        :param ssl: can be True or False (to check ot not the validity
-                    of the certificate. Or a CA_BUNDLE in case of self
-                    signed certiifcate (the concatenation of all the
-                    *.crt of the chain)
-        :param out_type: Type of object (json) NOTE: XML output isn't supported anymore, keeping the flag for compatibility reasons.
-        :param debug: print all the messages received from the server
-        :param proxies: Proxy dict as describes here: http://docs.python-requests.org/en/master/user/advanced/#proxies
-        :param cert: Client certificate, as described there: http://docs.python-requests.org/en/master/user/advanced/#ssl-cert-verification
+    :param url: URL of the MISP instance you want to connect to
+    :param key: API key of the user you want to use
+    :param ssl: can be True or False (to check ot not the validity
+                of the certificate. Or a CA_BUNDLE in case of self
+                signed certiifcate (the concatenation of all the
+                *.crt of the chain)
+    :param out_type: Type of object (json) NOTE: XML output isn't supported anymore, keeping the flag for compatibility reasons.
+    :param debug: print all the messages received from the server
+    :param proxies: Proxy dict as describes here: http://docs.python-requests.org/en/master/user/advanced/#proxies
+    :param cert: Client certificate, as described there: http://docs.python-requests.org/en/master/user/advanced/#ssl-cert-verification
     """
 
     # So it can may be accessed from the misp object.
@@ -100,7 +100,20 @@ class PyMISP(object):
 
         try:
             # Make sure the MISP instance is working and the URL is valid
-            self.get_version()
+            pymisp_version = __version__.split('.')
+            response = self.get_recommended_api_version()
+            if not response.get('version'):
+                warnings.warn("Unable to check the recommended PyMISP version (MISP <2.4.60), please upgrade.")
+            else:
+                recommended_pymisp_version = response['version'].split('.')
+                for a, b in zip(pymisp_version, recommended_pymisp_version):
+                    if a == b:
+                        continue
+                    elif a > b:
+                        warnings.warn("The version of PyMISP recommended by the MISP instance ({}) is older than the one you're using now ({}). Please upgrade the MISP instance or use an older PyMISP version.".format(response['version'], __version__))
+                    else:  # a < b
+                        warnings.warn("The version of PyMISP recommended by the MISP instance ({}) is newer than the one you're using now ({}). Please upgrade PyMISP.".format(response['version'], __version__))
+
         except Exception as e:
             raise PyMISPError('Unable to connect to MISP ({}). Please make sure the API key and the URL are correct (http/https is required): {}'.format(self.root_url, e))
 
@@ -115,7 +128,8 @@ class PyMISP(object):
             if not self.describe_types.get('sane_defaults'):
                 raise PyMISPError('The MISP server your are trying to reach is outdated (<2.4.52). Please use PyMISP v2.4.51.1 (pip install -I PyMISP==v2.4.51.1) and/or contact your administrator.')
         except:
-            describe_types = json.load(open(os.path.join(self.ressources_path, 'describeTypes.json'), 'r'))
+            with open(os.path.join(self.ressources_path, 'describeTypes.json'), 'r') as f:
+                describe_types = json.load(f)
             self.describe_types = describe_types['result']
 
         self.categories = self.describe_types['categories']
@@ -124,9 +138,8 @@ class PyMISP(object):
         self.sane_default = self.describe_types['sane_defaults']
 
     def __prepare_session(self, output='json'):
-        """
-            Prepare the headers of the session
-        """
+        """Prepare the headers of the session"""
+
         if not HAVE_REQUESTS:
             raise MissingDependency('Missing dependency, install requests (`pip install requests`)')
         session = requests.Session()
@@ -162,7 +175,7 @@ class PyMISP(object):
                         for e in errors:
                             if not e:
                                 continue
-                            if isinstance(e, str):
+                            if isinstance(e, basestring):
                                 messages.append(e)
                                 continue
                             for type_e, msgs in e.items():
@@ -206,10 +219,9 @@ class PyMISP(object):
     # ################################################
 
     def get_index(self, filters=None):
-        """
-            Return the index.
+        """Return the index.
 
-            Warning, there's a limit on the number of results
+        Warning, there's a limit on the number of results
         """
         session = self.__prepare_session()
         url = urljoin(self.root_url, 'events/index')
@@ -221,10 +233,9 @@ class PyMISP(object):
         return self._check_response(response)
 
     def get_event(self, event_id):
-        """
-            Get an event
+        """Get an event
 
-            :param event_id: Event id to get
+        :param event_id: Event id to get
         """
         session = self.__prepare_session()
         url = urljoin(self.root_url, 'events/{}'.format(event_id))
@@ -232,9 +243,7 @@ class PyMISP(object):
         return self._check_response(response)
 
     def get_stix_event(self, event_id=None, with_attachments=False, from_date=False, to_date=False, tags=False):
-        """
-            Get an event/events in STIX format
-        """
+        """Get an event/events in STIX format"""
         if tags:
             if isinstance(tags, list):
                 tags = "&&".join(tags)
@@ -248,10 +257,9 @@ class PyMISP(object):
         return self._check_response(response)
 
     def add_event(self, event):
-        """
-            Add a new event
+        """Add a new event
 
-            :param event: Event as JSON object / string or XML to add
+        :param event: Event as JSON object / string or XML to add
         """
         session = self.__prepare_session()
         url = urljoin(self.root_url, 'events')
@@ -262,11 +270,10 @@ class PyMISP(object):
         return self._check_response(response)
 
     def update_event(self, event_id, event):
-        """
-            Update an event
+        """Update an event
 
-            :param event_id: Event id to update
-            :param event: Event as JSON object / string or XML to add
+        :param event_id: Event id to update
+        :param event: Event as JSON object / string or XML to add
         """
         session = self.__prepare_session()
         url = urljoin(self.root_url, 'events/{}'.format(event_id))
@@ -277,10 +284,9 @@ class PyMISP(object):
         return self._check_response(response)
 
     def delete_event(self, event_id):
-        """
-            Delete an event
+        """Delete an event
 
-            :param event_id: Event id to delete
+        :param event_id: Event id to delete
         """
         session = self.__prepare_session()
         url = urljoin(self.root_url, 'events/{}'.format(event_id))
@@ -297,18 +303,18 @@ class PyMISP(object):
     # ######### Event handling (Json only) #########
     # ##############################################
 
-    def _prepare_full_event(self, distribution, threat_level_id, analysis, info, date=None, published=False, orgc_id=None, org_id=None):
+    def _prepare_full_event(self, distribution, threat_level_id, analysis, info, date=None, published=False, orgc_id=None, org_id=None, sharing_group_id=None):
         misp_event = MISPEvent(self.describe_types)
         misp_event.set_all_values(info=info, distribution=distribution, threat_level_id=threat_level_id,
-                                  analysis=analysis, date=date, orgc_id=orgc_id, org_id=org_id)
+                                  analysis=analysis, date=date, orgc_id=orgc_id, org_id=org_id, sharing_group_id=sharing_group_id)
         if published:
             misp_event.publish()
         return misp_event
 
-    def _prepare_full_attribute(self, category, type_value, value, to_ids, comment=None, distribution=5):
+    def _prepare_full_attribute(self, category, type_value, value, to_ids, comment=None, distribution=5, **kwargs):
         misp_attribute = MISPAttribute(self.describe_types)
         misp_attribute.set_all_values(type=type_value, value=value, category=category,
-                                      to_ids=to_ids, comment=comment, distribution=distribution)
+                                      to_ids=to_ids, comment=comment, distribution=distribution, **kwargs)
         return misp_attribute
 
     def _one_or_more(self, value):
@@ -317,6 +323,14 @@ class PyMISP(object):
 
     # ########## Helpers ##########
 
+    def _make_mispevent(self, event):
+        if not isinstance(event, MISPEvent):
+            e = MISPEvent(self.describe_types)
+            e.load(event)
+        else:
+            e = event
+        return e
+
     def get(self, eid):
         return self.get_event(eid)
 
@@ -324,38 +338,73 @@ class PyMISP(object):
         return self.get_stix_event(**kwargs)
 
     def update(self, event):
-        eid = event['Event']['id']
-        return self.update_event(eid, event)
+        e = self._make_mispevent(event)
+        if e.uuid:
+            eid = e.uuid
+        else:
+            eid = e.id
+        return self.update_event(eid, json.dumps(e, cls=EncodeUpdate))
 
     def publish(self, event):
-        if event['Event']['published']:
+        e = self._make_mispevent(event)
+        if e.published:
             return {'error': 'Already published'}
-        e = MISPEvent(self.describe_types)
-        e.load(event)
         e.publish()
-        return self.update_event(event['Event']['id'], json.dumps(e, cls=EncodeUpdate))
+        return self.update(e)
 
     def change_threat_level(self, event, threat_level_id):
-        e = MISPEvent(self.describe_types)
-        e.load(event)
+        e = self._make_mispevent(event)
         e.threat_level_id = threat_level_id
-        return self.update_event(event['Event']['id'], json.dumps(e, cls=EncodeUpdate))
+        return self.update(e)
 
-    def new_event(self, distribution=None, threat_level_id=None, analysis=None, info=None, date=None, published=False, orgc_id=None, org_id=None):
-        misp_event = self._prepare_full_event(distribution, threat_level_id, analysis, info, date, published, orgc_id, org_id)
+    def change_sharing_group(self, event, sharing_group_id):
+        e = self._make_mispevent(event)
+        e.distribution = 4      # Needs to be 'Sharing group'
+        e.sharing_group_id = sharing_group_id
+        return self.update(e)
+
+    def new_event(self, distribution=None, threat_level_id=None, analysis=None, info=None, date=None, published=False, orgc_id=None, org_id=None, sharing_group_id=None):
+        misp_event = self._prepare_full_event(distribution, threat_level_id, analysis, info, date, published, orgc_id, org_id, sharing_group_id)
         return self.add_event(json.dumps(misp_event, cls=EncodeUpdate))
 
-    def add_tag(self, event, tag):
+    def add_tag(self, event, tag, attribute=False):
+        # FIXME: this is dirty, this function needs to be deprecated with something tagging a UUID
         session = self.__prepare_session()
-        to_post = {'request': {'Event': {'id': event['Event']['id'], 'tag': tag}}}
-        response = session.post(urljoin(self.root_url, 'events/addTag'), data=json.dumps(to_post))
+        if attribute:
+            to_post = {'request': {'Attribute': {'id': event['id'], 'tag': tag}}}
+            path = 'attributes/addTag'
+        else:
+            # Allow for backwards-compat with old style
+            if "Event" in event:
+                event = event["Event"]
+            to_post = {'request': {'Event': {'id': event['id'], 'tag': tag}}}
+            path = 'events/addTag'
+        response = session.post(urljoin(self.root_url, path), data=json.dumps(to_post))
         return self._check_response(response)
 
-    def remove_tag(self, event, tag):
+    def remove_tag(self, event, tag, attribute=False):
+        # FIXME: this is dirty, this function needs to be deprecated with something removing the tag to a UUID
         session = self.__prepare_session()
-        to_post = {'request': {'Event': {'id': event['Event']['id'], 'tag': tag}}}
-        response = session.post(urljoin(self.root_url, 'events/removeTag'), data=json.dumps(to_post))
+        if attribute:
+            to_post = {'request': {'Attribute': {'id': event['id'], 'tag': tag}}}
+            path = 'attributes/addTag'
+        else:
+            to_post = {'request': {'Event': {'id': event['Event']['id'], 'tag': tag}}}
+            path = 'events/addTag'
+        response = session.post(urljoin(self.root_url, path), data=json.dumps(to_post))
         return self._check_response(response)
+
+    def _valid_uuid(self, uuid):
+        """Test if uuid is valid
+        Will test against CakeText's RFC 4122, i.e
+        "the third group must start with a 4,
+        and the fourth group must start with 8, 9, a or b."
+
+        :param uuid: an uuid
+        """
+        regex = re.compile('^[a-f0-9]{8}-?[a-f0-9]{4}-?4[a-f0-9]{3}-?[89ab][a-f0-9]{3}-?[a-f0-9]{12}\Z', re.I)
+        match = regex.match(uuid)
+        return bool(match)
 
     # ##### File attributes #####
 
@@ -366,13 +415,13 @@ class PyMISP(object):
             e = MISPEvent(self.describe_types)
             e.load(event)
             e.attributes += attributes
-            response = self.update_event(event['Event']['id'], json.dumps(e, cls=EncodeUpdate))
+            response = self.update(e)
         return response
 
-    def add_named_attribute(self, event, type_value, value, category=None, to_ids=False, comment=None, distribution=None, proposal=False):
+    def add_named_attribute(self, event, type_value, value, category=None, to_ids=False, comment=None, distribution=None, proposal=False, **kwargs):
         attributes = []
         for value in self._one_or_more(value):
-            attributes.append(self._prepare_full_attribute(category, type_value, value, to_ids, comment, distribution))
+            attributes.append(self._prepare_full_attribute(category, type_value, value, to_ids, comment, distribution, **kwargs))
         return self._send_attributes(event, attributes, proposal)
 
     def add_hashes(self, event, category='Artifacts dropped', filename=None, md5=None, sha1=None, sha256=None, ssdeep=None, comment=None, to_ids=True, distribution=None, proposal=False):
@@ -406,6 +455,36 @@ class PyMISP(object):
 
     def add_filename(self, event, filename, category='Artifacts dropped', to_ids=False, comment=None, distribution=None, proposal=False):
         return self.add_named_attribute(event, 'filename', filename, category, to_ids, comment, distribution, proposal)
+
+    def add_attachment(self, event, filename, attachment=None, category='Artifacts dropped', to_ids=False, comment=None, distribution=None, proposal=False):
+        """Add an attachment to the MISP event
+
+        :param event: The event to add an attachment to
+        :param filename: The name you want to store the file under
+        :param attachment: Either a file handle or a path to a file - will be uploaded
+        """
+
+        if hasattr(attachment, "read"):
+            # It's a file handle - we can read it
+            fileData = attachment.read()
+
+        elif isinstance(attachment, basestring):
+            # It can either be the b64 encoded data or a file path
+            if os.path.exists(attachment):
+                # It's a path!
+                with open(attachment, "r") as f:
+                    fileData = f.read()
+            else:
+                # We have to assume it's the actual data
+                fileData = attachment
+
+        # by now we have a string for the file
+        # we just need to b64 encode it and send it on its way
+        # also, just decode it to utf-8 to avoid the b'string' format
+        encodedData = base64.b64encode(fileData.encode("utf-8")).decode("utf-8")
+
+        # Send it on its way
+        return self.add_named_attribute(event, 'attachment', filename, category, to_ids, comment, distribution, proposal, data=encodedData)
 
     def add_regkey(self, event, regkey, rvalue=None, category='Artifacts dropped', to_ids=True, comment=None, distribution=None, proposal=False):
         if rvalue:
@@ -451,7 +530,7 @@ class PyMISP(object):
         def scrub(s):
             if not s.startswith('\\BaseNamedObjects\\'):
                 s = '\\BaseNamedObjects\\{}'.format(s)
-            return self
+            return s
         attributes = list(map(scrub, self._one_or_more(mutex)))
         return self.add_named_attribute(event, 'mutex', attributes, category, to_ids, comment, distribution, proposal)
 
@@ -656,6 +735,17 @@ class PyMISP(object):
         return self.__query_proposal(session, 'discard', proposal_id)
 
     # ##############################
+    # ###### Attribute update ######
+    # ##############################
+
+    def change_toids(self, attribute_uuid, to_ids):
+        if to_ids not in [0, 1]:
+            raise Exception('to_ids can only be 0 or 1')
+        query = {"to_ids": to_ids}
+        session = self.__prepare_session()
+        return self.__query(session, 'edit/{}'.format(attribute_uuid), query, controller='attributes')
+
+    # ##############################
     # ######## REST Search #########
     # ##############################
 
@@ -665,7 +755,6 @@ class PyMISP(object):
         if controller not in ['events', 'attributes']:
             raise Exception('Invalid controller. Can only be {}'.format(', '.join(['events', 'attributes'])))
         url = urljoin(self.root_url, '{}/{}'.format(controller, path.lstrip('/')))
-        query = {'request': query}
         if self.debug:
             print('URL: ', url)
             print('Query: ', query)
@@ -673,24 +762,22 @@ class PyMISP(object):
         return self._check_response(response)
 
     def search_index(self, published=None, eventid=None, tag=None, datefrom=None,
-                     dateto=None, eventinfo=None, threatlevel=None, distribution=None,
+                     dateuntil=None, eventinfo=None, threatlevel=None, distribution=None,
                      analysis=None, attribute=None, org=None):
-        """
-            Search only at the index level. Use ! infront of value as NOT, default OR
+        """Search only at the index level. Use ! infront of value as NOT, default OR
 
-            :param published: Published (0,1)
-            :param eventid: Evend ID(s) | str or list
-            :param tag: Tag(s) | str or list
-            :param datefrom: First date, in format YYYY-MM-DD
-            :param datefrom: Last date, in format YYYY-MM-DD
-            :param eventinfo: Event info(s) to match | str or list
-            :param threatlevel: Threat level(s) (1,2,3,4) | str or list
-            :param distribution: Distribution level(s) (0,1,2,3) | str or list
-            :param analysis: Analysis level(s) (0,1,2) | str or list
-            :param org: Organisation(s) | str or list
-
+        :param published: Published (0,1)
+        :param eventid: Evend ID(s) | str or list
+        :param tag: Tag(s) | str or list
+        :param datefrom: First date, in format YYYY-MM-DD
+        :param dateuntil: Last date, in format YYYY-MM-DD
+        :param eventinfo: Event info(s) to match | str or list
+        :param threatlevel: Threat level(s) (1,2,3,4) | str or list
+        :param distribution: Distribution level(s) (0,1,2,3) | str or list
+        :param analysis: Analysis level(s) (0,1,2) | str or list
+        :param org: Organisation(s) | str or list
         """
-        allowed = {'published': published, 'eventid': eventid, 'tag': tag, 'Dateto': dateto,
+        allowed = {'published': published, 'eventid': eventid, 'tag': tag, 'Dateuntil': dateuntil,
                    'Datefrom': datefrom, 'eventinfo': eventinfo, 'threatlevel': threatlevel,
                    'distribution': distribution, 'analysis': analysis, 'attribute': attribute,
                    'org': org}
@@ -723,11 +810,10 @@ class PyMISP(object):
         return self.__query(session, 'restSearch/download', query)
 
     def __prepare_rest_search(self, values, not_values):
-        """
-            Prepare a search, generate the chain processed by the server
+        """Prepare a search, generate the chain processed by the server
 
-            :param values: Values to search
-            :param not_values: Values that should not be in the response
+        :param values: Values to search
+        :param not_values: Values that should not be in the response
         """
         to_return = ''
         if values is not None:
@@ -746,62 +832,111 @@ class PyMISP(object):
                 to_return += '&&!'.join(not_values)
         return to_return
 
-    def search(self, values=None, not_values=None, type_attribute=None,
-               category=None, org=None, tags=None, not_tags=None, date_from=None,
-               date_to=None, last=None, metadata=None, controller='events'):
-        """
-            Search via the Rest API
+    def search(self, controller='events', **kwargs):
+        """Search via the Rest API
 
-            :param values: values to search for
-            :param not_values: values *not* to search for
-            :param type_attribute: Type of attribute
-            :param category: Category to search
-            :param org: Org reporting the event
-            :param tags: Tags to search for
-            :param not_tags: Tags *not* to search for
-            :param date_from: First date
-            :param date_to: Last date
-            :param last: Last updated events (for example 5d or 12h or 30m)
-            :param metadata: return onlymetadata if True
-
+        :param values: values to search for
+        :param not_values: values *not* to search for
+        :param type_attribute: Type of attribute
+        :param category: Category to search
+        :param org: Org reporting the event
+        :param tags: Tags to search for
+        :param not_tags: Tags *not* to search for
+        :param date_from: First date
+        :param date_to: Last date
+        :param last: Last updated events (for example 5d or 12h or 30m)
+        :param eventid: Last date
+        :param withAttachments: return events with or without the attachments
+        :param uuid: search by uuid
+        :param publish_timestamp: the publish timestamp
+        :param timestamp: the creation timestamp
+        :param enforceWarninglist: Enforce the warning lists
+        :param searchall: full text search on the database
+        :param metadata: return only metadata if True
+        :param published: return only published events
+        :param to_ids: return only the attributes with the to_ids flag set
+        :param deleted: also return the deleted attributes
         """
-        val = self.__prepare_rest_search(values, not_values)
-        tag = self.__prepare_rest_search(tags, not_tags)
+        # Event:     array('value', 'type', 'category', 'org', 'tags', 'from', 'to', 'last', 'eventid', 'withAttachments', 'uuid', 'publish_timestamp', 'timestamp', 'enforceWarninglist', 'searchall', 'metadata', 'published');
+        # Attribute: array('value', 'type', 'category', 'org', 'tags', 'from', 'to', 'last', 'eventid', 'withAttachments', 'uuid', 'publish_timestamp', 'timestamp', 'enforceWarninglist', 'to_ids', 'deleted');
+        val = self.__prepare_rest_search(kwargs.get('values'), kwargs.get('not_values'))
         query = {}
         if len(val) != 0:
             query['value'] = val
+
+        if kwargs.get('type_attribute'):
+            query['type'] = kwargs.get('type_attribute')
+
+        if kwargs.get('category'):
+            query['category'] = kwargs.get('category')
+
+        if kwargs.get('org') is not None:
+            query['org'] = kwargs.get('org')
+
+        tag = self.__prepare_rest_search(kwargs.get('tags'), kwargs.get('not_tags'))
         if len(tag) != 0:
             query['tags'] = tag
-        if type_attribute is not None:
-            query['type'] = type_attribute
-        if category is not None:
-            query['category'] = category
-        if org is not None:
-            query['org'] = org
-        if date_from is not None:
-            if isinstance(date_from, datetime.date) or isinstance(date_to, datetime.datetime):
-                query['from'] = date_from.strftime('%Y-%m-%d')
+
+        if kwargs.get('date_from'):
+            if isinstance(kwargs.get('date_from'), datetime.date) or isinstance(kwargs.get('date_from'), datetime.datetime):
+                query['from'] = kwargs.get('date_from').strftime('%Y-%m-%d')
             else:
-                query['from'] = date_from
-        if date_to is not None:
-            if isinstance(date_to, datetime.date) or isinstance(date_to, datetime.datetime):
-                query['to'] = date_to.strftime('%Y-%m-%d')
+                query['from'] = kwargs.get('date_from')
+
+        if kwargs.get('date_to'):
+            if isinstance(kwargs.get('date_to'), datetime.date) or isinstance(kwargs.get('date_to'), datetime.datetime):
+                query['to'] = kwargs.get('date_to').strftime('%Y-%m-%d')
             else:
-                query['to'] = date_to
-        if last is not None:
-            query['last'] = last
-        if metadata is not None:
-            query['metadata'] = metadata
+                query['to'] = kwargs.get('date_to')
+
+        if kwargs.get('last'):
+            query['last'] = kwargs.get('last')
+
+        if kwargs.get('eventid'):
+            query['eventid'] = kwargs.get('eventid')
+
+        if kwargs.get('withAttachments'):
+            query['withAttachments'] = kwargs.get('withAttachments')
+
+        if kwargs.get('uuid'):
+            if self._valid_uuid(kwargs.get('uuid')):
+                query['uuid'] = kwargs.get('uuid')
+            else:
+                return {'error': 'You must enter a valid uuid.'}
+
+        if kwargs.get('publish_timestamp'):
+            query['publish_timestamp'] = kwargs.get('publish_timestamp')
+
+        if kwargs.get('timestamp'):
+            query['timestamp'] = kwargs.get('timestamp')
+
+        if kwargs.get('enforceWarninglist'):
+            query['enforceWarninglist'] = kwargs.get('enforceWarninglist')
+
+        if kwargs.get('to_ids') is not None:
+            query['to_ids'] = kwargs.get('to_ids')
+
+        if kwargs.get('deleted') is not None:
+            query['deleted'] = kwargs.get('deleted')
+
+        if controller == 'events':
+            # Event search only:
+            if kwargs.get('searchall'):
+                query['searchall'] = kwargs.get('searchall')
+
+            if kwargs.get('metadata') is not None:
+                query['metadata'] = kwargs.get('metadata')
+
+            if kwargs.get('published') is not None:
+                query['published'] = kwargs.get('published')
 
         session = self.__prepare_session()
         return self.__query(session, 'restSearch/download', query, controller)
 
-    def get_attachement(self, event_id):
-        """
-            Get attachement of an event (not sample)
+    def get_attachment(self, event_id):
+        """Get attachement of an event (not sample)
 
-            :param event_id: Event id from where the attachements will
-                             be fetched
+        :param event_id: Event id from where the attachements will be fetched
         """
         attach = urljoin(self.root_url, 'attributes/downloadAttachment/download/{}'.format(event_id))
         session = self.__prepare_session()
@@ -849,29 +984,25 @@ class PyMISP(object):
         return True, details
 
     def download_last(self, last):
-        """
-            Download the last updated events.
+        """Download the last updated events.
 
-            :param last: can be defined in days, hours, minutes (for example 5d or 12h or 30m)
+        :param last: can be defined in days, hours, minutes (for example 5d or 12h or 30m)
         """
         return self.search(last=last)
 
     # ############## Suricata ###############
 
     def download_all_suricata(self):
-        """
-            Download all suricata rules events.
-        """
+        """Download all suricata rules events."""
         suricata_rules = urljoin(self.root_url, 'events/nids/suricata/download')
         session = self.__prepare_session('rules')
         response = session.get(suricata_rules)
         return response
 
     def download_suricata_rule_event(self, event_id):
-        """
-            Download one suricata rule event.
+        """Download one suricata rule event.
 
-            :param event_id: ID of the event to download (same as get)
+        :param event_id: ID of the event to download (same as get)
         """
         template = urljoin(self.root_url, 'events/nids/suricata/download/{}'.format(event_id))
         session = self.__prepare_session('rules')
@@ -903,15 +1034,11 @@ class PyMISP(object):
     # ########## Version ##########
 
     def get_api_version(self):
-        """
-            Returns the current version of PyMISP installed on the system
-        """
+        """Returns the current version of PyMISP installed on the system"""
         return {'version': __version__}
 
     def get_api_version_master(self):
-        """
-            Get the most recent version of PyMISP from github
-        """
+        """Get the most recent version of PyMISP from github"""
         r = requests.get('https://raw.githubusercontent.com/MISP/PyMISP/master/pymisp/__init__.py')
         if r.status_code == 200:
             version = re.findall("__version__ = '(.*)'", r.text)
@@ -919,19 +1046,22 @@ class PyMISP(object):
         else:
             return {'error': 'Impossible to retrieve the version of the master branch.'}
 
+    def get_recommended_api_version(self):
+        """Returns the recommended API version from the server"""
+        session = self.__prepare_session()
+        url = urljoin(self.root_url, 'servers/getPyMISPVersion.json')
+        response = session.get(url)
+        return self._check_response(response)
+
     def get_version(self):
-        """
-            Returns the version of the instance.
-        """
+        """Returns the version of the instance."""
         session = self.__prepare_session()
         url = urljoin(self.root_url, 'servers/getVersion.json')
         response = session.get(url)
         return self._check_response(response)
 
     def get_version_master(self):
-        """
-            Get the most recent version from github
-        """
+        """Get the most recent version from github"""
         r = requests.get('https://raw.githubusercontent.com/MISP/MISP/2.4/VERSION.json')
         if r.status_code == 200:
             master_version = json.loads(r.text)
@@ -942,7 +1072,7 @@ class PyMISP(object):
     # ############## Export Attributes in text ####################################
 
     def get_all_attributes_txt(self, type_attr):
-
+        """Get all attributes from a specific type as plain text. Only published and IDS flagged attributes are exported."""
         session = self.__prepare_session('txt')
         url = urljoin(self.root_url, 'attributes/text/download/%s' % type_attr)
         response = session.get(url)
@@ -951,9 +1081,7 @@ class PyMISP(object):
     # ############## Statistics ##################
 
     def get_attributes_statistics(self, context='type', percentage=None):
-        """
-            Get attributes statistics from the MISP instance
-        """
+        """Get attributes statistics from the MISP instance"""
         session = self.__prepare_session()
         if (context != 'category'):
             context = 'type'
@@ -965,9 +1093,7 @@ class PyMISP(object):
         return self._check_response(response)
 
     def get_tags_statistics(self, percentage=None, name_sort=None):
-        """
-        Get tags statistics from the MISP instance
-        """
+        """Get tags statistics from the MISP instance"""
         session = self.__prepare_session()
         if percentage is not None:
             percentage = 'true'
@@ -997,7 +1123,8 @@ class PyMISP(object):
 
     def sighting_per_json(self, json_file):
         session = self.__prepare_session()
-        jdata = json.load(open(json_file))
+        with open(json_file) as f:
+            jdata = json.load(f)
         url = urljoin(self.root_url, 'sightings/add/')
         response = session.post(url, data=json.dumps(jdata))
         return self._check_response(response)
@@ -1006,51 +1133,48 @@ class PyMISP(object):
 
     def get_sharing_groups(self):
         session = self.__prepare_session()
-        url = urljoin(self.root_url, 'sharing_groups/index.json')
+        url = urljoin(self.root_url, 'sharing_groups.json')
         response = session.get(url)
-        return self._check_response(response)['response'][0]
+        return self._check_response(response)['response']
 
     # ############## Users ##################
 
-    def _set_user_parameters(self, email, org_id, role_id, password, external_auth_required,
-                             external_auth_key, enable_password, nids_sid, server_id,
-                             gpgkey, certif_public, autoalert, contactalert, disabled,
-                             change_pw, termsaccepted, newsread):
+    def _set_user_parameters(self, **kwargs):
         user = {}
-        if email is not None:
-            user['email'] = email
-        if org_id is not None:
-            user['org_id'] = org_id
-        if role_id is not None:
-            user['role_id'] = role_id
-        if password is not None:
-            user['password'] = password
-        if external_auth_required is not None:
-            user['external_auth_required'] = external_auth_required
-        if external_auth_key is not None:
-            user['external_auth_key'] = external_auth_key
-        if enable_password is not None:
-            user['enable_password'] = enable_password
-        if nids_sid is not None:
-            user['nids_sid'] = nids_sid
-        if server_id is not None:
-            user['server_id'] = server_id
-        if gpgkey is not None:
-            user['gpgkey'] = gpgkey
-        if certif_public is not None:
-            user['certif_public'] = certif_public
-        if autoalert is not None:
-            user['autoalert'] = autoalert
-        if contactalert is not None:
-            user['contactalert'] = contactalert
-        if disabled is not None:
-            user['disabled'] = disabled
-        if change_pw is not None:
-            user['change_pw'] = change_pw
-        if termsaccepted is not None:
-            user['termsaccepted'] = termsaccepted
-        if newsread is not None:
-            user['newsread'] = newsread
+        if kwargs.get('email'):
+            user['email'] = kwargs.get('email')
+        if kwargs.get('org_id'):
+            user['org_id'] = kwargs.get('org_id')
+        if kwargs.get('role_id'):
+            user['role_id'] = kwargs.get('role_id')
+        if kwargs.get('password'):
+            user['password'] = kwargs.get('password')
+        if kwargs.get('external_auth_required'):
+            user['external_auth_required'] = kwargs.get('external_auth_required')
+        if kwargs.get('external_auth_key'):
+            user['external_auth_key'] = kwargs.get('external_auth_key')
+        if kwargs.get('enable_password'):
+            user['enable_password'] = kwargs.get('enable_password')
+        if kwargs.get('nids_sid'):
+            user['nids_sid'] = kwargs.get('nids_sid')
+        if kwargs.get('server_id'):
+            user['server_id'] = kwargs.get('server_id')
+        if kwargs.get('gpgkey'):
+            user['gpgkey'] = kwargs.get('gpgkey')
+        if kwargs.get('certif_public'):
+            user['certif_public'] = kwargs.get('certif_public')
+        if kwargs.get('autoalert'):
+            user['autoalert'] = kwargs.get('autoalert')
+        if kwargs.get('contactalert'):
+            user['contactalert'] = kwargs.get('contactalert')
+        if kwargs.get('disabled'):
+            user['disabled'] = kwargs.get('disabled')
+        if kwargs.get('change_pw'):
+            user['change_pw'] = kwargs.get('change_pw')
+        if kwargs.get('termsaccepted'):
+            user['termsaccepted'] = kwargs.get('termsaccepted')
+        if kwargs.get('newsread'):
+            user['newsread'] = kwargs.get('newsread')
         return user
 
     def get_users_list(self):
@@ -1065,18 +1189,8 @@ class PyMISP(object):
         response = session.get(url)
         return self._check_response(response)
 
-    def add_user(self, email, org_id, role_id, password=None,
-                 external_auth_required=None, external_auth_key=None,
-                 enable_password=None, nids_sid=None, server_id=None,
-                 gpgkey=None, certif_public=None, autoalert=None,
-                 contactalert=None, disabled=None, change_pw=None,
-                 termsaccepted=None, newsread=None):
-        new_user = self._set_user_parameters(email, org_id, role_id, password,
-                                             external_auth_required, external_auth_key,
-                                             enable_password, nids_sid, server_id,
-                                             gpgkey, certif_public, autoalert,
-                                             contactalert, disabled, change_pw,
-                                             termsaccepted, newsread)
+    def add_user(self, email, org_id, role_id, **kwargs):
+        new_user = self._set_user_parameters(**dict(email=email, org_id=org_id, role_id=role_id, **kwargs))
         session = self.__prepare_session()
         url = urljoin(self.root_url, 'admin/users/add/')
         response = session.post(url, data=json.dumps(new_user))
@@ -1084,30 +1198,20 @@ class PyMISP(object):
 
     def add_user_json(self, json_file):
         session = self.__prepare_session()
-        jdata = json.load(open(json_file))
+        with open(json_file) as f:
+            jdata = json.load(f)
         url = urljoin(self.root_url, 'admin/users/add/')
         response = session.post(url, data=json.dumps(jdata))
         return self._check_response(response)
 
-    def get_add_user_fields_list(self):
+    def get_user_fields_list(self):
         session = self.__prepare_session()
         url = urljoin(self.root_url, 'admin/users/add/')
         response = session.get(url)
         return self._check_response(response)
 
-    def edit_user(self, user_id, email=None, org_id=None, role_id=None,
-                  password=None, external_auth_required=None,
-                  external_auth_key=None, enable_password=None, nids_sid=None,
-                  server_id=None, gpgkey=None, certif_public=None,
-                  autoalert=None, contactalert=None, disabled=None,
-                  change_pw=None, termsaccepted=None, newsread=None):
-        edit_user = self._set_user_parameters(email, org_id, role_id, password,
-                                              external_auth_required, external_auth_key,
-                                              enable_password, nids_sid, server_id,
-                                              gpgkey, certif_public, autoalert,
-                                              contactalert, disabled, change_pw,
-                                              termsaccepted, newsread)
-
+    def edit_user(self, user_id, **kwargs):
+        edit_user = self._set_user_parameters(**kwargs)
         session = self.__prepare_session()
         url = urljoin(self.root_url, 'admin/users/edit/{}'.format(user_id))
         response = session.post(url, data=json.dumps(edit_user))
@@ -1115,19 +1219,92 @@ class PyMISP(object):
 
     def edit_user_json(self, json_file, user_id):
         session = self.__prepare_session()
-        jdata = json.load(open(json_file))
+        with open(json_file) as f:
+            jdata = json.load(f)
         url = urljoin(self.root_url, 'admin/users/edit/{}'.format(user_id))
         response = session.post(url, data=json.dumps(jdata))
-        return self._check_response(response)
-
-    def get_edit_user_fields_list(self, user_id):
-        session = self.__prepare_session()
-        url = urljoin(self.root_url, 'admin/users/edit/{}'.format(user_id))
-        response = session.get(url)
         return self._check_response(response)
 
     def delete_user(self, user_id):
         session = self.__prepare_session()
         url = urljoin(self.root_url, 'admin/users/delete/{}'.format(user_id))
+        response = session.post(url)
+        return self._check_response(response)
+
+    # ############## Organisations ##################
+
+    def _set_organisation_parameters(self, **kwargs):
+        organisation = {}
+        if kwargs.get('name'):
+            organisation['name'] = kwargs.get('name')
+        if kwargs.get('anonymise'):
+            organisation['anonymise'] = kwargs.get('anonymise')
+        if kwargs.get('description'):
+            organisation['description'] = kwargs.get('description')
+        if kwargs.get('type'):
+            organisation['type'] = kwargs.get('type')
+        if kwargs.get('nationality'):
+            organisation['nationality'] = kwargs.get('nationality')
+        if kwargs.get('sector'):
+            organisation['sector'] = kwargs.get('sector')
+        if kwargs.get('uuid'):
+            organisation['uuid'] = kwargs.get('uuid')
+        if kwargs.get('contacts'):
+            organisation['contacts'] = kwargs.get('contacts')
+        if kwargs.get('local'):
+            organisation['local'] = kwargs.get('local')
+        return organisation
+
+    def get_organisations_list(self):
+        session = self.__prepare_session()
+        url = urljoin(self.root_url, 'organisations')
+        response = session.get(url)
+        return self._check_response(response)['response']
+
+    def get_organisation(self, organisation_id):
+        session = self.__prepare_session()
+        url = urljoin(self.root_url, 'organisations/view/{}'.format(organisation_id))
+        response = session.get(url)
+        return self._check_response(response)
+
+    def add_organisation(self, name, **kwargs):
+        new_org = self._set_organisation_parameters(**dict(name=name, **kwargs))
+        session = self.__prepare_session()
+        url = urljoin(self.root_url, 'admin/organisations/add/')
+        response = session.post(url, data=json.dumps(new_org))
+        return self._check_response(response)
+
+    def add_organisation_json(self, json_file):
+        session = self.__prepare_session()
+        with open(json_file) as f:
+            jdata = json.load(f)
+        url = urljoin(self.root_url, 'admin/organisations/add/')
+        response = session.post(url, data=json.dumps(jdata))
+        return self._check_response(response)
+
+    def get_organisation_fields_list(self):
+        session = self.__prepare_session()
+        url = urljoin(self.root_url, 'admin/organisations/add/')
+        response = session.get(url)
+        return self._check_response(response)
+
+    def edit_organisation(self, org_id, **kwargs):
+        edit_org = self._set_organisation_parameters(**kwargs)
+        session = self.__prepare_session()
+        url = urljoin(self.root_url, 'admin/organisations/edit/{}'.format(org_id))
+        response = session.post(url, data=json.dumps(edit_org))
+        return self._check_response(response)
+
+    def edit_organisation_json(self, json_file, org_id):
+        session = self.__prepare_session()
+        with open(json_file) as f:
+            jdata = json.load(f)
+        url = urljoin(self.root_url, 'admin/organisations/edit/{}'.format(org_id))
+        response = session.post(url, data=json.dumps(jdata))
+        return self._check_response(response)
+
+    def delete_organisation(self, org_id):
+        session = self.__prepare_session()
+        url = urljoin(self.root_url, 'admin/organisations/delete/{}'.format(org_id))
         response = session.post(url)
         return self._check_response(response)

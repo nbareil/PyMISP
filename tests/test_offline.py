@@ -8,7 +8,7 @@ import os
 
 import pymisp as pm
 from pymisp import PyMISP
-from pymisp import NewEventError
+# from pymisp import NewEventError
 from pymisp import MISPEvent
 from pymisp import EncodeUpdate
 from pymisp import EncodeFull
@@ -21,25 +21,34 @@ class TestOffline(unittest.TestCase):
         self.maxDiff = None
         self.domain = 'http://misp.local/'
         self.key = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-        self.event = {'Event': json.load(open('tests/misp_event.json', 'r'))}
-        self.new_misp_event = {'Event': json.load(open('tests/new_misp_event.json', 'r'))}
+        with open('tests/misp_event.json', 'r') as f:
+            self.event = {'Event': json.load(f)}
+        with open('tests/new_misp_event.json', 'r') as f:
+            self.new_misp_event = {'Event': json.load(f)}
         self.ressources_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), '../pymisp/data')
-        self.types = json.load(open(os.path.join(self.ressources_path, 'describeTypes.json'), 'r'))
-        self.sharing_groups = json.load(open('tests/sharing_groups.json', 'r'))
+        with open(os.path.join(self.ressources_path, 'describeTypes.json'), 'r') as f:
+            self.types = json.load(f)
+        with open('tests/sharing_groups.json', 'r') as f:
+            self.sharing_groups = json.load(f)
         self.auth_error_msg = {"name": "Authentication failed. Please make sure you pass the API key of an API enabled user along in the Authorization header.",
                                "message": "Authentication failed. Please make sure you pass the API key of an API enabled user along in the Authorization header.",
                                "url": "\/events\/1"}
+        with open('tests/search_index_result.json', 'r') as f:
+            self.search_index_result = json.load(f)
 
     def initURI(self, m):
         m.register_uri('GET', self.domain + 'events/1', json=self.auth_error_msg, status_code=403)
-        m.register_uri('GET', self.domain + 'servers/getVersion.json', json={"version": "2.4.50"})
-        m.register_uri('GET', self.domain + 'sharing_groups/index.json', json=self.sharing_groups)
+        m.register_uri('GET', self.domain + 'servers/getVersion.json', json={"version": "2.4.62"})
+        m.register_uri('GET', self.domain + 'servers/getPyMISPVersion.json', json={"version": "2.4.62"})
+        m.register_uri('GET', self.domain + 'sharing_groups.json', json=self.sharing_groups)
         m.register_uri('GET', self.domain + 'attributes/describeTypes.json', json=self.types)
         m.register_uri('GET', self.domain + 'events/2', json=self.event)
-        m.register_uri('POST', self.domain + 'events/2', json=self.event)
+        m.register_uri('POST', self.domain + 'events/5758ebf5-c898-48e6-9fe9-5665c0a83866', json=self.event)
         m.register_uri('DELETE', self.domain + 'events/2', json={'message': 'Event deleted.'})
         m.register_uri('DELETE', self.domain + 'events/3', json={'errors': ['Invalid event'], 'message': 'Invalid event', 'name': 'Invalid event', 'url': '/events/3'})
         m.register_uri('DELETE', self.domain + 'attributes/2', json={'message': 'Attribute deleted.'})
+        m.register_uri('GET', self.domain + 'events/index/searchtag:1', json=self.search_index_result)
+        m.register_uri('GET', self.domain + 'events/index/searchtag:ecsirt:malicious-code=%22ransomware%22', json=self.search_index_result)
 
     def test_getEvent(self, m):
         self.initURI(m)
@@ -52,8 +61,8 @@ class TestOffline(unittest.TestCase):
     def test_updateEvent(self, m):
         self.initURI(m)
         pymisp = PyMISP(self.domain, self.key)
-        e0 = pymisp.update_event(2, json.dumps(self.event))
-        e1 = pymisp.update_event(2, self.event)
+        e0 = pymisp.update_event('5758ebf5-c898-48e6-9fe9-5665c0a83866', json.dumps(self.event))
+        e1 = pymisp.update_event('5758ebf5-c898-48e6-9fe9-5665c0a83866', self.event)
         self.assertEqual(e0, e1)
         e2 = pymisp.update(e0)
         self.assertEqual(e1, e2)
@@ -76,7 +85,7 @@ class TestOffline(unittest.TestCase):
     def test_publish(self, m):
         self.initURI(m)
         pymisp = PyMISP(self.domain, self.key)
-        e = pymisp.publish(self.event) # requests-mock always return the non-published event
+        e = pymisp.publish(self.event)  # requests-mock always return the non-published event
         pub = self.event
         pub['Event']['published'] = True
         # self.assertEqual(e, pub) FIXME: broken test, not-published event returned
@@ -89,13 +98,13 @@ class TestOffline(unittest.TestCase):
         api_version = pymisp.get_api_version()
         self.assertEqual(api_version, {'version': pm.__version__})
         server_version = pymisp.get_version()
-        self.assertEqual(server_version, {"version": "2.4.50"})
+        self.assertEqual(server_version, {"version": "2.4.62"})
 
     def test_getSharingGroups(self, m):
         self.initURI(m)
         pymisp = PyMISP(self.domain, self.key)
         sharing_groups = pymisp.get_sharing_groups()
-        self.assertEqual(sharing_groups, self.sharing_groups['response'][0])
+        self.assertEqual(sharing_groups[0], self.sharing_groups['response'][0])
 
     def test_auth_error(self, m):
         self.initURI(m)
@@ -122,9 +131,22 @@ class TestOffline(unittest.TestCase):
         self.initURI(m)
         pymisp = PyMISP(self.domain, self.key)
         misp_event = MISPEvent(pymisp.describe_types)
-        misp_event.load(open('tests/57c4445b-c548-4654-af0b-4be3950d210f.json', 'r').read())
+        with open('tests/57c4445b-c548-4654-af0b-4be3950d210f.json', 'r') as f:
+            misp_event.load(f.read())
         json.dumps(misp_event, cls=EncodeUpdate)
         json.dumps(misp_event, cls=EncodeFull)
+
+    def test_searchIndexByTagId(self, m):
+        self.initURI(m)
+        pymisp = PyMISP(self.domain, self.key)
+        response = pymisp.search_index(tag="1")
+        self.assertEqual(response['response'], self.search_index_result)
+
+    def test_searchIndexByTagName(self, m):
+        self.initURI(m)
+        pymisp = PyMISP(self.domain, self.key)
+        response = pymisp.search_index(tag='ecsirt:malicious-code="ransomware"')
+        self.assertEqual(response['response'], self.search_index_result)
 
     def test_addAttributes(self, m):
         class MockPyMISP(PyMISP):
@@ -144,11 +166,11 @@ class TestOffline(unittest.TestCase):
         p.add_detection_name(evt, 'WATERMELON')
         p.add_filename(evt, 'foobar.exe')
         p.add_regkey(evt, 'HKLM\\Software\\Microsoft\\Outlook\\Addins\\foobar')
-        p.add_regkey(evt,  'HKLM\\Software\\Microsoft\\Outlook\\Addins\\foobar', rvalue='foobar')
+        p.add_regkey(evt, 'HKLM\\Software\\Microsoft\\Outlook\\Addins\\foobar', rvalue='foobar')
         regkeys = {
-                'HKLM\\Software\\Microsoft\\Outlook\\Addins\\foo': None,
-                'HKLM\\Software\\Microsoft\\Outlook\\Addins\\bar': 'baz',
-                'HKLM\\Software\\Microsoft\\Outlook\\Addins\\bae': 0,
+            'HKLM\\Software\\Microsoft\\Outlook\\Addins\\foo': None,
+            'HKLM\\Software\\Microsoft\\Outlook\\Addins\\bar': 'baz',
+            'HKLM\\Software\\Microsoft\\Outlook\\Addins\\bae': 0,
         }
         self.assertEqual(3, p.add_regkeys(evt, regkeys))
         p.add_pattern(evt, '.*foobar.*', in_memory=True)
@@ -183,20 +205,20 @@ class TestOffline(unittest.TestCase):
         p.add_snort(evt, 'blaba')
         p.add_net_other(evt, 'blabla')
         p.add_email_src(evt, 'foo@bar.com')
-        p.add_email_dst(evt,  'foo@bar.com')
+        p.add_email_dst(evt, 'foo@bar.com')
         p.add_email_subject(evt, 'you won the lottery')
         p.add_email_attachment(evt, 'foo.doc')
         p.add_target_email(evt, 'foo@bar.com')
         p.add_target_user(evt, 'foo')
-        p.add_target_machine(evt,  'foobar')
-        p.add_target_org(evt,  'foobar')
-        p.add_target_location(evt,  'foobar')
+        p.add_target_machine(evt, 'foobar')
+        p.add_target_org(evt, 'foobar')
+        p.add_target_location(evt, 'foobar')
         p.add_target_external(evt, 'foobar')
         p.add_threat_actor(evt, 'WATERMELON')
         p.add_internal_link(evt, 'foobar')
         p.add_internal_comment(evt, 'foobar')
         p.add_internal_text(evt, 'foobar')
         p.add_internal_other(evt, 'foobar')
-
+        p.add_attachment(evt, "testFile", "Attacment added!")
 if __name__ == '__main__':
     unittest.main()

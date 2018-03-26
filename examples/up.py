@@ -5,13 +5,10 @@ from pymisp import PyMISP
 from keys import misp_url, misp_key
 import argparse
 
-
-# Usage for pipe masters: ./last.py -l 5h | jq .
-
+from io import open
 
 def init(url, key):
     return PyMISP(url, key, True, 'json', debug=True)
-
 
 def up_event(m, event, content):
     with open(content, 'r') as f:
@@ -19,8 +16,8 @@ def up_event(m, event, content):
     print(result)
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Get an event from a MISP instance.')
-    parser.add_argument("-e", "--event", required=True, help="Event ID to get.")
+    parser = argparse.ArgumentParser(description="Update a MISP event.")
+    parser.add_argument("-e", "--event", required=True, help="Event ID to update.")
     parser.add_argument("-i", "--input", required=True, help="Input file")
 
     args = parser.parse_args()

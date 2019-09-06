@@ -20,6 +20,9 @@ from .exceptions import PyMISPError, SearchError, NoURL, NoKey
 from .mispevent import MISPEvent, MISPAttribute
 from .abstract import MISPEncode
 
+from pymisp.mispevent import MISPEvent
+from requests.models import Response
+from typing import Any, Callable, Dict, List, Optional, Union
 logger = logging.getLogger('pymisp')
 
 try:
@@ -45,7 +48,7 @@ except ImportError:
     ASYNC_OK = False
 
 
-def deprecated(func):
+def deprecated(func: Callable) -> Callable:
     '''This is a decorator which can be used to mark functions
     as deprecated. It will result in a warning being emitted
     when the function is used.'''
@@ -78,7 +81,7 @@ class PyMISP(object):
     :param asynch: Use asynchronous processing where possible
     """
 
-    def __init__(self, url, key, ssl=True, out_type='json', debug=None, proxies=None, cert=None, asynch=False):
+    def __init__(self, url: str, key: str, ssl: bool = True, out_type: str = 'json', debug: bool = False, proxies: Dict[str, str] = None, cert: None = None, asynch: bool = False) -> None:
         if not url:
             raise NoURL('Please provide the URL of your MISP instance.')
         if not key:
@@ -103,18 +106,18 @@ class PyMISP(object):
 
         try:
             # Make sure the MISP instance is working and the URL is valid
-            response = self.get_recommended_api_version()
-            if response.get('errors'):
-                logger.warning(response.get('errors')[0])
-            elif not response.get('version'):
+            response_api_version = self.get_recommended_api_version()
+            if response_api_version.get('errors'):
+                logger.warning(response_api_version.get('errors')[0])
+            elif not response_api_version.get('version'):
                 logger.warning("Unable to check the recommended PyMISP version (MISP <2.4.60), please upgrade.")
             else:
                 pymisp_version_tup = tuple(int(x) for x in __version__.split('.'))
-                recommended_version_tup = tuple(int(x) for x in response['version'].split('.'))
+                recommended_version_tup = tuple(int(x) for x in response_api_version['version'].split('.'))
                 if recommended_version_tup < pymisp_version_tup[:3]:
-                    logger.info("The version of PyMISP recommended by the MISP instance ({}) is older than the one you're using now ({}). If you have a problem, please upgrade the MISP instance or use an older PyMISP version.".format(response['version'], __version__))
+                    logger.info("The version of PyMISP recommended by the MISP instance ({}) is older than the one you're using now ({}). If you have a problem, please upgrade the MISP instance or use an older PyMISP version.".format(response_api_version['version'], __version__))
                 elif pymisp_version_tup[:3] < recommended_version_tup:
-                    logger.warning("The version of PyMISP recommended by the MISP instance ({}) is newer than the one you're using now ({}). Please upgrade PyMISP.".format(response['version'], __version__))
+                    logger.warning("The version of PyMISP recommended by the MISP instance ({}) is newer than the one you're using now ({}). Please upgrade PyMISP.".format(response_api_version['version'], __version__))
 
         except Exception as e:
             raise PyMISPError('Unable to connect to MISP ({}). Please make sure the API key and the URL are correct (http/https is required): {}'.format(self.root_url, e))
@@ -138,8 +141,8 @@ class PyMISP(object):
         self.category_type_mapping = self.describe_types['category_type_mappings']
         self.sane_default = self.describe_types['sane_defaults']
 
-    def __prepare_request(self, request_type, url, data=None,
-                          background_callback=None, output_type='json'):
+    def __prepare_request(self, request_type: str, url: str, data: Optional[str]=None,
+            background_callback: Optional[Callable]=None, output_type: Optional[str]='json') -> Response:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug('{} - {}'.format(request_type, url))
             if data is not None:
@@ -169,7 +172,7 @@ class PyMISP(object):
     # ### Core helpers ####
     # #####################
 
-    def flatten_error_messages(self, response):
+    def flatten_error_messages(self, response: Dict[str, Any]) -> List[Any]:
         """Dirty dirty method to normalize the error messages between the API calls.
         Any response containing the a key 'error' or 'errors' failed at some point,
         we make one single list out of it.
@@ -207,7 +210,7 @@ class PyMISP(object):
 
         return messages
 
-    def _check_response(self, response):
+    def _check_response(self, response: Response) -> Dict[str, Any]:
         """Check if the response from the server is not an unexpected error"""
         errors = []
         if response.status_code >= 500:
@@ -248,7 +251,7 @@ class PyMISP(object):
         """Returns a list/tuple of one or more items, regardless of input."""
         return value if isinstance(value, (tuple, list)) else (value,)
 
-    def _make_mispevent(self, event):
+    def _make_mispevent(self, event: Dict[str, Dict[str, Union[List[Dict[str, Union[str, bool]]], Dict[str, str], str, bool]]]) -> MISPEvent:
         """Transform a Json MISP event into a MISPEvent"""
         if not isinstance(event, MISPEvent):
             e = MISPEvent(self.describe_types)
@@ -257,7 +260,7 @@ class PyMISP(object):
             e = event
         return e
 
-    def _prepare_full_event(self, distribution, threat_level_id, analysis, info, date=None, published=False, orgc_id=None, org_id=None, sharing_group_id=None):
+    def _prepare_full_event(self, distribution: Optional[int], threat_level_id: Optional[int], analysis: Optional[int], info: Optional[str], date: Optional[str] = None, published: Optional[bool] = False, orgc_id: Optional[int] = None, org_id: Optional[int] = None, sharing_group_id: Optional[int] = None) -> MISPEvent:
         """Initialize a new MISPEvent from scratch"""
         misp_event = MISPEvent(self.describe_types)
         misp_event.set_all_values(info=info, distribution=distribution, threat_level_id=threat_level_id,
@@ -308,7 +311,7 @@ class PyMISP(object):
             response = self.__prepare_request('POST', url, json.dumps(filters))
         return self._check_response(response)
 
-    def get_event(self, event_id):
+    def get_event(self, event_id: int) -> Dict[str, Union[Dict[str, Union[List[Dict[str, Union[str, bool]]], Dict[str, str], str, bool]], str, List[str]]]:
         """Get an event
 
         :param event_id: Event id to get
@@ -317,7 +320,7 @@ class PyMISP(object):
         response = self.__prepare_request('GET', url)
         return self._check_response(response)
 
-    def add_event(self, event):
+    def add_event(self, event: MISPEvent) -> Dict[str, Union[Dict[str, Dict[str, Union[str, Dict[str, str], None, bool]]], str, List[str]]]:
         """Add a new event
 
         :param event: Event as JSON object / string to add
@@ -330,7 +333,7 @@ class PyMISP(object):
         response = self.__prepare_request('POST', url, event)
         return self._check_response(response)
 
-    def update_event(self, event_id, event):
+    def update_event(self, event_id: int, event: Union[str, MISPEvent, Dict[str, Dict[str, Union[List[Dict[str, Union[str, bool]]], Dict[str, str], str, bool]]]]) -> Dict[str, Dict[str, Union[List[Dict[str, Union[str, bool]]], Dict[str, str], str, bool]]]:
         """Update an event
 
         :param event_id: Event id to update
@@ -344,7 +347,7 @@ class PyMISP(object):
         response = self.__prepare_request('POST', url, event)
         return self._check_response(response)
 
-    def delete_event(self, event_id):
+    def delete_event(self, event_id: int) -> Dict[str, Union[str, List[str]]]:
         """Delete an event
 
         :param event_id: Event id to delete
@@ -353,7 +356,7 @@ class PyMISP(object):
         response = self.__prepare_request('DELETE', url)
         return self._check_response(response)
 
-    def delete_attribute(self, attribute_id, hard_delete=False):
+    def delete_attribute(self, attribute_id: int, hard_delete: bool = False) -> Dict[str, str]:
         """Delete an attribute by ID"""
         if hard_delete:
             url = urljoin(self.root_url, 'attributes/delete/{}/1'.format(attribute_id))
@@ -362,7 +365,7 @@ class PyMISP(object):
         response = self.__prepare_request('GET', url)
         return self._check_response(response)
 
-    def pushEventToZMQ(self, event_id):
+    def pushEventToZMQ(self, event_id: int):
         """Force push an event on ZMQ"""
         url = urljoin(self.root_url, 'events/pushEventToZMQ/{}.json'.format(event_id))
         response = self.__prepare_request('POST', url)
@@ -372,11 +375,11 @@ class PyMISP(object):
     # ############### Event handling ###############
     # ##############################################
 
-    def get(self, eid):
+    def get(self, eid: int) -> Dict[str, Union[Dict[str, Union[List[Dict[str, Union[str, bool]]], Dict[str, str], str, bool]], str, List[str]]]:
         """Get an event by event ID"""
         return self.get_event(eid)
 
-    def update(self, event):
+    def update(self, event: Dict[str, Dict[str, Union[List[Dict[str, Union[str, bool]]], Dict[str, str], str, bool]]]) -> Dict[str, Dict[str, Union[List[Dict[str, Union[str, bool]]], Dict[str, str], str, bool]]]:
         """Update an event by ID"""
         e = self._make_mispevent(event)
         if e.uuid:
@@ -418,7 +421,7 @@ class PyMISP(object):
         e.sharing_group_id = sharing_group_id
         return self.update(e)
 
-    def new_event(self, distribution=None, threat_level_id=None, analysis=None, info=None, date=None, published=False, orgc_id=None, org_id=None, sharing_group_id=None):
+    def new_event(self, distribution: Optional[int] = None, threat_level_id: Optional[int] = None, analysis: Optional[int] = None, info: Optional[str] = None, date: Optional[str] = None, published: bool = False, orgc_id: None = None, org_id: None = None, sharing_group_id: None = None) -> Any:
         """Create and add a new event"""
         misp_event = self._prepare_full_event(distribution, threat_level_id, analysis, info, date, published, orgc_id, org_id, sharing_group_id)
         return self.add_event(misp_event)
@@ -729,17 +732,12 @@ class PyMISP(object):
     # ######### Upload samples through the API #########
     # ##################################################
 
-    def _prepare_upload(self, event_id, distribution, to_ids, category, comment, info,
-                        analysis, threat_level_id):
+    def _prepare_upload(self, event_id: Optional[int], distribution, to_ids: Optional[bool], category, comment, info,
+                analysis, threat_level_id: Optional[int]) -> (Any, int):
         """Helper to prepare a sample to upload"""
-        to_post = {'request': {}}
+        to_post: Dict[str, Any] = {'request': {}}
 
-        if event_id is not None:
-            try:
-                event_id = int(event_id)
-            except ValueError:
-                pass
-        if not isinstance(event_id, int):
+        if not event_id:
             # New event
             misp_event = self._prepare_full_event(distribution, threat_level_id, analysis, info)
             to_post['request']['distribution'] = misp_event.distribution
@@ -890,9 +888,9 @@ class PyMISP(object):
             response = self.__prepare_request('POST', url, json.dumps(query))
             return self._check_response(response)
 
-    def search_index(self, published=None, eventid=None, tag=None, datefrom=None,
-                     dateuntil=None, eventinfo=None, threatlevel=None, distribution=None,
-                     analysis=None, attribute=None, org=None, async_callback=None, normalize=False):
+    def search_index(self, published: None = None, eventid: None = None, tag: Optional[str] = None, datefrom: None = None,
+                     dateuntil: None = None, eventinfo: None = None, threatlevel: None = None, distribution: None = None,
+                     analysis: None = None, attribute: None = None, org: None = None, async_callback: None = None, normalize: bool = False) -> Dict[str, List[Dict[str, Union[str, bool, Dict[str, str], List[Dict[str, Union[str, Dict[str, Union[str, bool]]]]], Dict[str, None]]]]]:
         """Search only at the index level. Use ! infront of value as NOT, default OR
         If using async, give a callback that takes 2 args, session and response:
             basic usage is
@@ -941,7 +939,7 @@ class PyMISP(object):
             response = self.__prepare_request('POST', url, json.dumps(to_post))
             res = self._check_response(response)
             if normalize:
-                to_return = {'response': []}
+                to_return: Dict[str, List] = {'response': []}
                 for elem in res['response']:
                     tmp = {'Event': elem}
                     to_return['response'].append(tmp)
@@ -1152,7 +1150,7 @@ class PyMISP(object):
 
     # ########## Version ##########
 
-    def get_api_version(self):
+    def get_api_version(self) -> Dict[str, str]:
         """Returns the current version of PyMISP installed on the system"""
         return {'version': __version__}
 
@@ -1165,13 +1163,13 @@ class PyMISP(object):
         else:
             return {'error': 'Impossible to retrieve the version of the master branch.'}
 
-    def get_recommended_api_version(self):
+    def get_recommended_api_version(self) -> Dict[str, str]:
         """Returns the recommended API version from the server"""
         url = urljoin(self.root_url, 'servers/getPyMISPVersion.json')
         response = self.__prepare_request('GET', url)
         return self._check_response(response)
 
-    def get_version(self):
+    def get_version(self) -> Dict[str, str]:
         """Returns the version of the instance."""
         url = urljoin(self.root_url, 'servers/getVersion.json')
         response = self.__prepare_request('GET', url)
@@ -1243,7 +1241,7 @@ class PyMISP(object):
 
     # ############## Sharing Groups ##################
 
-    def get_sharing_groups(self):
+    def get_sharing_groups(self) -> List[Dict[str, Union[Dict[str, Union[str, bool]], Dict[str, str], List[Dict[str, Union[str, bool, Dict[str, str]]]], List[Dict[str, Union[str, bool]]], bool]]]:
         """Get the existing sharing groups"""
         url = urljoin(self.root_url, 'sharing_groups.json')
         response = self.__prepare_request('GET', url)

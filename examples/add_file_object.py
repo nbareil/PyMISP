@@ -3,10 +3,14 @@
 
 from pymisp import PyMISP
 from pymisp.tools import make_binary_objects
-import traceback
+
 from keys import misp_url, misp_key, misp_verifycert
+
+import traceback
 import glob
 import argparse
+import sys
+import os
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Extract indicators out of binaries and add MISP objects to a MISP instance.')
@@ -21,6 +25,7 @@ if __name__ == '__main__':
             fo, peo, seos = make_binary_objects(f)
         except Exception as e:
             traceback.print_exc()
+            sys.exit(0)
 
         if seos:
             for s in seos:

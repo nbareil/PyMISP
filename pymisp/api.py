@@ -28,7 +28,7 @@ try:
     basestring = str
     unicode = str
 except ImportError:
-    from urlparse import urljoin
+    from urlparse import urljoin # type: ignore
     logger.warning("You're using python 2, it is strongly recommended to use python >=3.5")
 
 try:
@@ -39,7 +39,7 @@ except ImportError:
 
 
 try:
-    from requests_futures.sessions import FuturesSession
+    from requests_futures.sessions import FuturesSession # type: ignore
     ASYNC_OK = True
 except ImportError:
     ASYNC_OK = False

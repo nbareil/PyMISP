@@ -123,8 +123,8 @@ class PyMISP(object):
             response = self.__prepare_request('GET', urljoin(self.root_url, 'attributes/describeTypes.json'))
             describe_types = self._check_response(response)
             if describe_types.get('error'):
-                for e in describe_types.get('error'):
-                    raise PyMISPError('Failed: {}'.format(e))
+                for err in describe_types.get('error'):
+                    raise PyMISPError('Failed: {}'.format(err))
             self.describe_types = describe_types['result']
             if not self.describe_types.get('sane_defaults'):
                 raise PyMISPError('The MISP server your are trying to reach is outdated (<2.4.52). Please use PyMISP v2.4.51.1 (pip install -I PyMISP==v2.4.51.1) and/or contact your administrator.')
